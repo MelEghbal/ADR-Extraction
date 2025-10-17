@@ -109,26 +109,28 @@ async function analyzeProject(rootPath: string): Promise<string> {
   return summary;
 }
 
-async function showADRInBrowser(adrMarkdownContent: string, rootPath: string) {
+async function showADRInBrowser(
+  adrMarkdownContent: string,
+  rootPath: string,
+  adrFilePath: string,
+) {
   const adrFileName = `ADR-${Date.now()}`;
   const outputDir = path.join(rootPath, "docs", "adr");
 
-  // 1. Ensure output directory exists
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
-  // 2. Save the original .md file
-  const adrFilePath = path.join(outputDir, `${adrFileName}.md`);
-  fs.writeFileSync(adrFilePath, adrMarkdownContent, "utf8");
-  vscode.window.showInformationMessage(
-    `ADR saved to: ${path.join("docs", "adr", `${adrFileName}.md`)}`,
-  );
+  // save the original .md file
+  // const adrFilePath = path.join(outputDir, `${adrFileName}.md`);
+  // fs.writeFileSync(adrFilePath, adrMarkdownContent, "utf8");
+  // vscode.window.showInformationMessage(
+  //   `ADR saved to: ${path.join("docs", "adr", `${adrFileName}.md`)}`,
+  // );
 
-  // 3. Convert Markdown to HTML with clean styling
+  // convert Markdown to HTML
   const adrBodyHtml = markdownit.render(adrMarkdownContent);
 
-  // Basic, clean CSS style for ADR display
   const adrHtmlTemplate = (title: string, bodyHtml: string) => `
 <!DOCTYPE html>
 <html lang="en">
@@ -151,16 +153,16 @@ async function showADRInBrowser(adrMarkdownContent: string, rootPath: string) {
 </body>
 </html>
 `;
-  // Extract the main title from the ADR to use in the HTML <title>
+  // extract the main title from the ADR to use in the HTML <title>
   const adrTitleMatch = adrMarkdownContent.match(/^# (.*)/m);
   const adrTitle = adrTitleMatch ? adrTitleMatch[1] : `ADR ${adrFileName}`;
   const fullHtmlContent = adrHtmlTemplate(adrTitle, adrBodyHtml);
 
-  // 4. Save the generated .html file
+  // save the generated .html file
   const htmlFilePath = path.join(outputDir, `${adrFileName}.html`);
   fs.writeFileSync(htmlFilePath, fullHtmlContent, "utf8");
 
-  // 5. Open the HTML file in the external browser
+  // open the HTML file in the external browser
   const htmlFileUri = vscode.Uri.file(htmlFilePath);
   vscode.env.openExternal(htmlFileUri).then(() => {
     vscode.window.showInformationMessage(
@@ -168,9 +170,110 @@ async function showADRInBrowser(adrMarkdownContent: string, rootPath: string) {
     );
   });
 
-  // Also show the markdown document in VS Code for easy editing
+  // shows the markdown document
   const doc = await vscode.workspace.openTextDocument(adrFilePath);
   vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
+}
+
+async function evaluateADR(adrContent: string): Promise<string> {
+  const evaluationPrompt = `
+You are a highly critical and experienced **Chief Architect**. Your task is to evaluate the following Architecture Decision Record (ADR) against industry best practices and logical coherence.
+
+**Evaluation Criteria (Score 0-10, where 10 is excellent):**
+1. **Completeness:** Are all sections of the template fully addressed?
+2. **Clarity:** Is the core decision and issue clearly and concisely stated?
+3. **Logic/Justification:** Are the 'Argument' and 'Implications' logically sound and directly supported by the inferred context?
+4. **Professionalism:** Is the tone appropriate and free of unnecessary fluff?
+
+**Your Output MUST adhere to the following strict format:**
+
+### Overall Score: [X/10]
+
+### Detailed Critique:
+- **Completeness:** [Brief summary of section completion]
+- **Clarity:** [Brief summary of clarity]
+- **Logic:** [Brief summary of logical coherence]
+- **Suggestions for Human Improvement:** [Specific, actionable steps to make this ADR indistinguishable from a human-made one]
+
+---
+**ADR to Evaluate:**
+${adrContent}
+`;
+
+  try {
+    const response = await fetch("http://localhost:11434/api/generate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "llama3",
+        prompt: evaluationPrompt,
+        stream: false,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    const data: any = await response.json();
+    return data.response
+      ? data.response.trim()
+      : "Evaluation failed to return content.";
+  } catch (error: any) {
+    vscode.window.showErrorMessage(
+      `Ollama LLaMA 3 Evaluation Error: ${error.message || "Unknown error"}`,
+    );
+    console.error("Ollama LLaMA 3 Evaluation Error:", error);
+    return "ERROR: Could not complete evaluation due to network or Ollama issue.";
+  }
+}
+
+function showEvaluationWindow(
+  context: vscode.ExtensionContext,
+  evaluationMarkdown: string,
+) {
+  const panel = vscode.window.createWebviewPanel(
+    "adrEvaluation", // identifies the type of the webview
+    "ADR Quality Evaluation", // title displayed in the tab
+    vscode.ViewColumn.One, // editor column to show the new panel in
+    {},
+  );
+  const evaluationHtmlBody = markdownit.render(evaluationMarkdown);
+  panel.webview.html = getEvaluationWebviewContent(evaluationHtmlBody);
+}
+
+function getEvaluationWebviewContent(htmlBody: string): string {
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADR Evaluation</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 20px; color: #333; }
+        h1 { color: #8e44ad; border-bottom: 2px solid #8e44ad; padding-bottom: 5px; }
+        h3 { color: #2980b9; margin-top: 1.5em; border-bottom: 1px solid #ecf0f1; padding-bottom: 0.3em; }
+        .score-box { background-color: #ecf0f1; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 1.2em; border-left: 5px solid #2ecc71; }
+        .score-box h3 { margin: 0; border: none; padding: 0; color: #2c3e50; }
+        ul { padding-left: 20px; }
+        li { margin-bottom: 8px; }
+        hr { border: 0; border-top: 1px solid #eee; margin: 20px 0; }
+        pre, code { background-color: #f8f8f8; padding: 10px; border-radius: 4px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>ADR Quality Evaluation</h1>
+    <div class="score-box">
+        ${htmlBody}
+    </div>
+    <p>This evaluation was performed by a LLaMA 3 model acting as a Chief Architect.</p>
+</body>
+</html>
+`;
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -203,12 +306,12 @@ export function activate(context: vscode.ExtensionContext) {
           const adrFileName = `ADR-${Date.now()}`;
           const outputDir = path.join(rootPath, "docs", "adr");
 
-          // 1. Ensure output directory exists
+          // output directory exists
           if (!fs.existsSync(outputDir)) {
             fs.mkdirSync(outputDir, { recursive: true });
           }
 
-          // 2. Save the original .md file
+          // save the .md file
           const adrFilePath = path.join(outputDir, `${adrFileName}.md`);
           fs.writeFileSync(adrFilePath, adr, "utf8");
           vscode.window.showInformationMessage(
@@ -219,7 +322,6 @@ export function activate(context: vscode.ExtensionContext) {
             )}`,
           );
 
-          // 3. Prompt user for action
           const openOption = await vscode.window.showQuickPick(
             [
               "Open as Webpage (Styled HTML)",
@@ -233,13 +335,27 @@ export function activate(context: vscode.ExtensionContext) {
           );
 
           if (openOption === "Open as Markdown File (for editing)") {
-            // Open the .md file in VS Code
+            // open the .md file in VS Code
             const doc = await vscode.workspace.openTextDocument(adrFilePath);
             vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
           } else if (openOption === "Open as Webpage (Styled HTML)") {
-            // Convert to HTML and open in external browser
-            await showADRInBrowser(adr, rootPath);
+            // convert to HTML and open in external browser
+            await showADRInBrowser(adr, rootPath, adrFilePath);
           }
+
+          progress.report({
+            message: "ADR generated. Now evaluating quality...",
+          });
+
+          const evaluationResult = await evaluateADR(adr);
+          showEvaluationWindow(context, evaluationResult);
+
+          if (!fs.existsSync(outputDir)) {
+            fs.mkdirSync(outputDir, { recursive: true });
+          }
+
+        const doc = await vscode.workspace.openTextDocument(adrFilePath);
+        vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
         } else {
           vscode.window.showErrorMessage(
             "ADR generation failed. Check the output for LLaMA 3 errors.",
