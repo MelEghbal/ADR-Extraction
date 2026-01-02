@@ -4,7 +4,8 @@ import * as path from "path";
 import * as dotenv from "dotenv";
 const markdownit = require("markdown-it")();
 
-dotenv.config();
+const dotenvResult = dotenv.config({ path: "D:/Courses/first-extension/.env" });
+console.log("dotenv config result:", dotenvResult);
 
 export async function generateADR(projectSummary: string): Promise<string> {
   const prompt = `
@@ -13,18 +14,18 @@ You are a highly experienced and meticulous **Software Architect**. Your task is
 Based on this analysis, you will write one or more **Architecture Decision Records (ADRs)**. **Every ADR must strictly adhere to the comprehensive template and structure provided below.**
 
 **Mandatory Analysis Focus:**
-1.  **Data Persistence:** Infer the database technology, ORM, and chosen schema approach.
-2.  **Inter-Service Communication:** Determine the protocol (e.g., REST, gRPC, Pub/Sub) and justification.
-3.  **Application Structure:** Identify the architecture style (e.g., Layered, Hexagonal, Microservices, Monolith).
-4.  **Major Technology Stack:** Justify the selection of the core programming language/framework.
-5.  **Deployment/Infrastructure:** Infer the containerization strategy (Docker/Kubernetes) or serverless approach.
+1.  **Data Persistence:** Infer the database technology, ORM, and chosen schema approach.
+2.  **Inter-Service Communication:** Determine the protocol (e.g., REST, gRPC, Pub/Sub) and justification.
+3.  **Application Structure:** Identify the architecture style (e.g., Layered, Hexagonal, Microservices, Monolith).
+4.  **Major Technology Stack:** Justify the selection of the core programming language/framework.
+5.  **Deployment/Infrastructure:** Infer the containerization strategy (Docker/Kubernetes) or serverless approach.
 
 **ADR Generation Rules (Must be strictly followed):**
-1.  **Output Format:** Generate the ADR content using **Markdown** for maximum readability.
-2.  **Template Fidelity:** Use the exact headings provided in the template below.
-3.  **Factual Inference:** All sections (especially 'Assumptions', 'Constraints', and 'Positions') must be inferred factually from the code evidence and current industry context, assuming a *proactive* rather than reactive decision process.
-4.  **Completeness:** Do not leave any section blank. If a section is not applicable (e.g., 'Related decisions' in the first ADR), state 'N/A at this time' or infer a minimal relevant entry.
-5.  **Conciseness:** Be concise and factual within each section, but ensure sufficient detail to fully satisfy the requirement of that field.
+1.  **Output Format:** Generate the ADR content using **Markdown** for maximum readability.
+2.  **Template Fidelity:** Use the exact headings provided in the template below.
+3.  **Factual Inference:** All sections (especially 'Assumptions', 'Constraints', and 'Positions') must be inferred factually from the code evidence and current industry context, assuming a *proactive* rather than reactive decision process.
+4.  **Completeness:** Do not leave any section blank. If a section is not applicable (e.g., 'Related decisions' in the first ADR), state 'N/A at this time' or infer a minimal relevant entry.
+5.  **Conciseness:** Be concise and factual within each section, but ensure sufficient detail to fully satisfy the requirement of that field.
 
 **Comprehensive ADR Template (Use these exact headings and structure):**
 
@@ -44,42 +45,41 @@ Based on this analysis, you will write one or more **Architecture Decision Recor
 * **Related Artifacts:** List architecture, design, or scope documents impacted by this decision.
 * **Related Principles:** State which enterprise or project principles (e.g., "Favor COTS over build," "Maximize Observability") this decision aligns with.
 * **Notes:** Capture any ancillary discussion points or issues the team discussed during the decision process.
-    
+    
 ${projectSummary}
 
 Respond only with the ADR in markdown format.
 `;
 
   try {
-    const response = await fetch("http://localhost:11434/api/generate", {
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) throw new Error("API_KEY not found");
+
+    const response = await fetch("https://api.avalai.ir/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "llama3",
-        prompt: prompt,
-        stream: false,
+        model: "gpt-5.2",
+        messages: [
+          { role: "system", content: "You are a senior software architect." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.7,
+        max_tokens: 4096,
       }),
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`HTTP ${response.status}: ${errorText}`);
+      throw new Error(await response.text());
     }
 
     const data: any = await response.json();
-
-    if (data.response) {
-      return data.response.trim();
-    } else {
-      throw new Error("Invalid response format from Ollama");
-    }
-  } catch (error: any) {
-    vscode.window.showErrorMessage(
-      `Ollama LLaMA 3 Error: ${error.message || "Unknown error"}`,
-    );
-    console.error("Ollama LLaMA 3 Error:", error);
+    return data.choices?.[0]?.message?.content?.trim() ?? "";
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Error: ${err.message}`);
     return "";
   }
 }
@@ -121,13 +121,6 @@ async function showADRInBrowser(
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
-  // save the original .md file
-  // const adrFilePath = path.join(outputDir, `${adrFileName}.md`);
-  // fs.writeFileSync(adrFilePath, adrMarkdownContent, "utf8");
-  // vscode.window.showInformationMessage(
-  //   `ADR saved to: ${path.join("docs", "adr", `${adrFileName}.md`)}`,
-  // );
-
   // convert Markdown to HTML
   const adrBodyHtml = markdownit.render(adrMarkdownContent);
 
@@ -153,12 +146,10 @@ async function showADRInBrowser(
 </body>
 </html>
 `;
-  // extract the main title from the ADR to use in the HTML <title>
   const adrTitleMatch = adrMarkdownContent.match(/^# (.*)/m);
   const adrTitle = adrTitleMatch ? adrTitleMatch[1] : `ADR ${adrFileName}`;
   const fullHtmlContent = adrHtmlTemplate(adrTitle, adrBodyHtml);
 
-  // save the generated .html file
   const htmlFilePath = path.join(outputDir, `${adrFileName}.html`);
   fs.writeFileSync(htmlFilePath, fullHtmlContent, "utf8");
 
@@ -201,15 +192,29 @@ ${adrContent}
 `;
 
   try {
-    const response = await fetch("http://localhost:11434/api/generate", {
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) {
+      throw new Error("API_KEY not found in environment variables");
+    }
+
+    const response = await fetch("https://api.avalai.ir/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "llama3",
-        prompt: evaluationPrompt,
-        stream: false,
+        model: "gpt-5.2",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a senior software architect and a strict ADR reviewer.",
+          },
+          { role: "user", content: evaluationPrompt },
+        ],
+        temperature: 0.2,
+        max_tokens: 2048,
       }),
     });
 
@@ -219,15 +224,16 @@ ${adrContent}
     }
 
     const data: any = await response.json();
-    return data.response
-      ? data.response.trim()
-      : "Evaluation failed to return content.";
+    return (
+      data.choices?.[0]?.message?.content?.trim() ??
+      "Evaluation failed to return content."
+    );
   } catch (error: any) {
     vscode.window.showErrorMessage(
-      `Ollama LLaMA 3 Evaluation Error: ${error.message || "Unknown error"}`,
+      `API Evaluation Error: ${error.message || "Unknown error"}`,
     );
-    console.error("Ollama LLaMA 3 Evaluation Error:", error);
-    return "ERROR: Could not complete evaluation due to network or Ollama issue.";
+    console.error("API Evaluation Error:", error);
+    return "ERROR: Could not complete evaluation due to network or API issue.";
   }
 }
 
@@ -236,9 +242,9 @@ function showEvaluationWindow(
   evaluationMarkdown: string,
 ) {
   const panel = vscode.window.createWebviewPanel(
-    "adrEvaluation", // identifies the type of the webview
-    "ADR Quality Evaluation", // title displayed in the tab
-    vscode.ViewColumn.One, // editor column to show the new panel in
+    "adrEvaluation",
+    "ADR Quality Evaluation",
+    vscode.ViewColumn.One,
     {},
   );
   const evaluationHtmlBody = markdownit.render(evaluationMarkdown);
@@ -270,7 +276,7 @@ function getEvaluationWebviewContent(htmlBody: string): string {
     <div class="score-box">
         ${htmlBody}
     </div>
-    <p>This evaluation was performed by a LLaMA 3 model acting as a Chief Architect.</p>
+    <p>This evaluation was performed by a model acting as a Chief Architect.</p>
 </body>
 </html>
 `;
@@ -297,7 +303,7 @@ export function activate(context: vscode.ExtensionContext) {
         const analysis = await analyzeProject(rootPath);
 
         progress.report({
-          message: "Calling Ollama LLaMA 3 for ADR generation...",
+          message: "Calling API for ADR generation...",
         });
         const adr = await generateADR(analysis);
         if (adr) {
@@ -311,7 +317,6 @@ export function activate(context: vscode.ExtensionContext) {
             fs.mkdirSync(outputDir, { recursive: true });
           }
 
-          // save the .md file
           const adrFilePath = path.join(outputDir, `${adrFileName}.md`);
           fs.writeFileSync(adrFilePath, adr, "utf8");
           vscode.window.showInformationMessage(
@@ -354,11 +359,11 @@ export function activate(context: vscode.ExtensionContext) {
             fs.mkdirSync(outputDir, { recursive: true });
           }
 
-        const doc = await vscode.workspace.openTextDocument(adrFilePath);
-        vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
+          const doc = await vscode.workspace.openTextDocument(adrFilePath);
+          vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
         } else {
           vscode.window.showErrorMessage(
-            "ADR generation failed. Check the output for LLaMA 3 errors.",
+            "ADR generation failed. Check the output for API errors.",
           );
         }
       },
